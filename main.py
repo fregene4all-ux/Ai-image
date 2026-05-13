@@ -9,21 +9,22 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 BOT_TOKEN = "8968819657:AAEHb4SFyRfSlPlRvqhRu1sNr-vG6XoWNMw"
 replicate.api_token = "r8_2XTLoJflR5MFndOH9M3dLGNdA1tlBds0PtG59"
 
-IMAGE_MODEL = "black-forest-labs/flux-schnell"
-VIDEO_MODEL = "anotherjesse/zeroscope-v2-xl"
-TRANSFORM_MODEL = "tencentarc/photomaker"
-
 VIDEO_KEYWORDS = ["video", "cinematic", "motion", "scene"]
 
+IMAGE_MODEL = "stability-ai/sdxl"
+VIDEO_MODEL = "luma/ray"
+TRANSFORM_MODEL = "tencentarc/photomaker"
+
 def enhance_image_prompt(prompt):
-    return f"ultra realistic portrait of {prompt}, 8k, DSLR photo, cinematic lighting, shallow depth of field, highly detailed skin, professional photography"
+    return f"ultra realistic portrait of {prompt}, 8k DSLR photo, cinematic lighting, highly detailed face, professional photography"
 
 def enhance_video_prompt(prompt):
-    return f"cinematic video of {prompt}, realistic motion, 35mm film look, natural lighting, handheld camera, ultra realistic, film grain"
+    return f"cinematic video of {prompt}, realistic motion, film look, natural lighting, handheld camera, ultra realistic"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Send a prompt or upload a photo.")
@@ -39,12 +40,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Generating...")
 
     try:
-        if is_video:
-            final_prompt = enhance_video_prompt(prompt)
-            model = VIDEO_MODEL
-        else:
-            final_prompt = enhance_image_prompt(prompt)
-            model = IMAGE_MODEL
+        final_prompt = enhance_video_prompt(prompt) if is_video else enhance_image_prompt(prompt)
+        model = VIDEO_MODEL if is_video else IMAGE_MODEL
 
         output = await asyncio.to_thread(
             replicate.run,
@@ -55,13 +52,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if isinstance(output, list):
             output = output[0]
 
+        if not output:
+            await update.message.reply_text("No output returned from model.")
+            return
+
         if is_video:
             await update.message.reply_video(video=output)
         else:
             await update.message.reply_photo(photo=output)
 
-    except Exception:
-        await update.message.reply_text("Generation failed.")
+    except Exception as e:
+        logger.error(e)
+        await update.message.reply_text(f"Error: {str(e)}")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]
@@ -90,17 +92,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             TRANSFORM_MODEL,
             {
                 "prompt": caption,
-                "image": image_url
+                "input_image": image_url
             }
         )
 
         if isinstance(output, list):
             output = output[0]
 
+        if not output:
+            await update.message.reply_text("No output returned.")
+            return
+
         await update.message.reply_photo(photo=output)
 
-    except Exception:
-        await update.message.reply_text("Transformation failed.")
+    except Exception as e:
+        logger.error(e)
+        await update.message.reply_text(f"Error: {str(e)}")
 
     finally:
         if file_path and os.path.exists(file_path):
