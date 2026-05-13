@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = "8968819657:AAEHb4SFyRfSlPlRvqhRu1sNr-vG6XoWNMw"
-replicate.api_token = "r8_2XTLoJflR5MFndOH9M3dLGNdA1tlBds0PtG59"
+replicate.api_token = "r8_cu7IyNgGG1a3MnjzeUElyS0HjmUXG6N4GrCXz"
 
 VIDEO_KEYWORDS = ["video", "cinematic", "motion", "scene"]
 
