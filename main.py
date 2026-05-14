@@ -1,126 +1,112 @@
 import os
 import asyncio
-import logging
-import tempfile
-import requests
-import replicate
+import base64
+import io
+from collections import defaultdict
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from openai import AsyncOpenAI
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = "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"
+RUNWAY_API_KEY = "key_ed9bbf5785302611db8f938d4e3bfe705651d1b1c131299a5a3ed8a0d29316c141c359f49889931b2a0f7e681f4146d63151057491e8ddfa259f9d03a17ff067"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+user_history = defaultdict(list)
 
-BOT_TOKEN = "8968819657:AAEHb4SFyRfSlPlRvqhRu1sNr-vG6XoWNMw"
- 
-client = replicate.Client_api_token= "r8_cu7IyNgGG1a3MnjzeUElyS0HjmUXG6N4GrCXz"
-
-VIDEO_KEYWORDS = ["video", "cinematic", "motion", "scene"]
-
-IMAGE_MODEL = "stability-ai/sdxl"
-VIDEO_MODEL = "luma/ray"
-TRANSFORM_MODEL = "tencentarc/photomaker"
-
-def enhance_image_prompt(prompt):
-    return f"ultra realistic portrait of {prompt}, 8k DSLR photo, cinematic lighting, highly detailed face, professional photography"
-
-def enhance_video_prompt(prompt):
-    return f"cinematic video of {prompt}, realistic motion, film look, natural lighting, handheld camera, ultra realistic"
+IMAGE_PROMPT_TEMPLATE = "cinematic DSLR style, ultra-realistic face detail, dramatic lighting, shallow depth of field, 8k resolution, professional photography: {}"
+VIDEO_PROMPT_TEMPLATE = "cinematic motion, film look, natural camera movement, realistic lighting, professional cinematography: {}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send a prompt or upload a photo.")
+    keyboard = [
+        [InlineKeyboardButton("Image Mode", callback_data="mode_image"),
+         InlineKeyboardButton("Video Mode", callback_data="mode_video")],
+        [InlineKeyboardButton("History", callback_data="history"),
+         InlineKeyboardButton("Reset", callback_data="reset")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select mode:", reply_markup=reply_markup)
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    prompt = update.message.text
-
-    if not prompt:
-        return
-
-    is_video = any(k in prompt.lower() for k in VIDEO_KEYWORDS)
-
-    await update.message.reply_text("Generating...")
-
-    try:
-        final_prompt = enhance_video_prompt(prompt) if is_video else enhance_image_prompt(prompt)
-        model = VIDEO_MODEL if is_video else IMAGE_MODEL
-
-        output = await asyncio.to_thread(
-            replicate.run,
-            model,
-            {"prompt": final_prompt}
-        )
-
-        if isinstance(output, list):
-            output = output[0]
-
-        if not output:
-            await update.message.reply_text("No output returned from model.")
-            return
-
-        if is_video:
-            await update.message.reply_video(video=output)
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if query.data == "mode_image":
+        context.user_data["mode"] = "image"
+        await query.edit_message_text("Image mode active. Send a prompt.")
+    elif query.data == "mode_video":
+        context.user_data["mode"] = "video"
+        await query.edit_message_text("Video mode active. Send a prompt.")
+    elif query.data == "history":
+        history = user_history.get(user_id, [])
+        if not history:
+            await query.edit_message_text("No history.")
         else:
-            await update.message.reply_photo(photo=output)
+            text = "Last prompts:\n" + "\n".join([f"{i+1}. {h}" for i, h in enumerate(history[-5:])])
+            await query.edit_message_text(text)
+    elif query.data == "reset":
+        user_history[user_id] = []
+        context.user_data["mode"] = None
+        await query.edit_message_text("History cleared. Select mode:", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Image Mode", callback_data="mode_image"),
+             InlineKeyboardButton("Video Mode", callback_data="mode_video")]
+        ]))
 
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text(f"Error: {str(e)}")
+async def generate_images(prompt: str):
+    enhanced = IMAGE_PROMPT_TEMPLATE.format(prompt)
+    response = await client.images.generate(
+        model="gpt-image-1",
+        prompt=enhanced,
+        n=3,
+        size="1024x1024",
+        response_format="b64_json"
+    )
+    images = []
+    for img in response.data:
+        decoded = base64.b64decode(img.b64_json)
+        images.append(io.BytesIO(decoded))
+    return images
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo = update.message.photo[-1]
-    caption = update.message.caption or "improve this portrait, ultra realistic, cinematic lighting"
+async def generate_video(prompt: str):
+    return None
 
-    await update.message.reply_text("Transforming image...")
-
-    file_path = None
-
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text
+    mode = context.user_data.get("mode", "image")
+    user_history[user_id].append(text)
+    if len(user_history[user_id]) > 50:
+        user_history[user_id] = user_history[user_id][-50:]
+    progress = await update.message.reply_text("Starting...")
     try:
-        file = await context.bot.get_file(photo.file_id)
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-            file_path = tmp.name
-            await file.download_to_drive(file_path)
-
-        upload = requests.post(
-            "https://tmpfiles.org/api/v1/upload",
-            files={"file": open(file_path, "rb")}
-        ).json()
-
-        image_url = upload["data"]["url"].replace("tmpfiles.org/", "tmpfiles.org/dl/")
-
-        output = await asyncio.to_thread(
-            replicate.run,
-            TRANSFORM_MODEL,
-            {
-                "prompt": caption,
-                "input_image": image_url
-            }
-        )
-
-        if isinstance(output, list):
-            output = output[0]
-
-        if not output:
-            await update.message.reply_text("No output returned.")
-            return
-
-        await update.message.reply_photo(photo=output)
-
+        if mode == "image":
+            await progress.edit_text("Enhancing prompt...")
+            await asyncio.sleep(0.5)
+            await progress.edit_text("Generating...")
+            images = await generate_images(text)
+            await progress.edit_text("Sending results...")
+            media = [InputMediaPhoto(img) for img in images]
+            await update.message.reply_media_group(media=media)
+            await progress.delete()
+        elif mode == "video":
+            await progress.edit_text("Enhancing prompt...")
+            await asyncio.sleep(0.5)
+            await progress.edit_text("Generating video...")
+            result = await generate_video(text)
+            await progress.edit_text("Video generation is currently unavailable.")
     except Exception as e:
-        logger.error(e)
-        await update.message.reply_text(f"Error: {str(e)}")
+        await progress.edit_text("Error occurred. Please try again.")
 
-    finally:
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update and update.message:
+        await update.message.reply_text("An error occurred.")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(error_handler)
     app.run_polling()
 
 if __name__ == "__main__":
