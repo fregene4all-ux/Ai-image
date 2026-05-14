@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from openai import AsyncOpenAI
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = "8968819657:AAEHb4SFyRfSlPlRvqhRu1sNr-vG6XoWNMw"
 OPENAI_API_KEY = "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"
 RUNWAY_API_KEY = "key_ed9bbf5785302611db8f938d4e3bfe705651d1b1c131299a5a3ed8a0d29316c141c359f49889931b2a0f7e681f4146d63151057491e8ddfa259f9d03a17ff067"
 
